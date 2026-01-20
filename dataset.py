@@ -29,6 +29,7 @@ class CIFAR10Dataset:
             alpha: Dirichlet distribution parameter (lower = more Non-IID)
             num_clients: Number of clients
             seed: Random seed for reproducibility
+            splits: Local train/test split ratio, e.g., [0.9, 0.1]
         """
         self.data_dir = data_dir
         self.alpha = alpha
@@ -36,14 +37,14 @@ class CIFAR10Dataset:
         self.seed = seed
         self.dataset_name = "cifar10"
         self.num_classes = 10
-        # 本地 train / test 划分比例，例如 [0.9, 0.1]
+        # Local train/test split ratio, e.g., [0.9, 0.1]
         if splits is None:
             splits = [0.9, 0.1]
         if len(splits) < 2:
-            raise ValueError("splits 必须至少包含两个值，例如 [0.9, 0.1]")
+            raise ValueError("splits must contain at least two values, e.g., [0.9, 0.1]")
         splits = np.array(splits, dtype=float)
         if splits.sum() <= 0:
-            raise ValueError("splits 之和必须大于 0")
+            raise ValueError("Sum of splits must be greater than 0")
         self.splits = (splits / splits.sum()).tolist()
         
         # Set random seed
@@ -54,7 +55,7 @@ class CIFAR10Dataset:
         self._load_datasets()
         
         # Partition data
-        # 每个客户端内部再按 self.splits 划分出本地 train / test
+        # Further split into local train/test for each client based on self.splits
         self.client_datasets = self._partition_non_iid()
     
     def _load_datasets(self):
@@ -98,8 +99,8 @@ class CIFAR10Dataset:
     def _partition_non_iid(self) -> List[Dict[str, Subset]]:
         """
         Partition dataset using Dirichlet distribution for Non-IID data.
-        先按 Dirichlet 做总体 Non-IID 划分，然后在每个客户端内部
-        按 self.splits（如 [0.9, 0.1]）切分出本地 train / test。
+        First perform global Non-IID partition using Dirichlet, then split into
+        local train/test for each client based on self.splits (e.g., [0.9, 0.1]).
         
         Returns:
             List of dicts, one per client: {'train': Subset, 'test': Subset}
@@ -140,7 +141,7 @@ class CIFAR10Dataset:
         for client_idx in range(self.num_clients):
             np.random.shuffle(client_indices[client_idx])
         
-        # 为每个客户端创建本地 train / test Subset
+        # Create local train/test Subsets for each client
         client_datasets: List[Dict[str, Subset]] = []
         train_ratio = self.splits[0]
         for client_idx in range(self.num_clients):
@@ -155,7 +156,7 @@ class CIFAR10Dataset:
                 "test": Subset(self.train_dataset, test_indices)
             })
         
-        # Print statistics（基于整体客户端数据分布）
+        # Print statistics (based on overall client data distribution)
         self._print_partition_stats(labels, client_indices)
         
         return client_datasets
@@ -203,11 +204,11 @@ class CIFAR10Dataset:
         """Get DataLoader for a specific client and split
         
         Args:
-            client_idx: 客户端索引
-            batch_size: 批大小
-            shuffle: 是否打乱
-            split: 使用的本地划分 ('train' 或 'test')
-            fraction: 使用的数据比例 (0-1), 例如 0.01 表示使用 1% 的该客户端数据
+            client_idx: Client index
+            batch_size: Batch size
+            shuffle: Whether to shuffle
+            split: Local split to use ('train' or 'test')
+            fraction: Fraction of data to use (0-1), e.g., 0.01 for 1% of this client's data
         """
         base_dataset = self.get_client_dataset(client_idx, split=split)
         
@@ -322,15 +323,15 @@ class CIFAR100Dataset(CIFAR10Dataset):
         """Get DataLoader for a specific client and split
         
         Args:
-            client_idx: 客户端索引
-            batch_size: 批大小
-            shuffle: 是否打乱
-            split: 使用的本地划分 ('train' 或 'test')
-            fraction: 使用的数据比例 (0-1), 例如 0.01 表示使用 1% 的该客户端数据
+            client_idx: Client index
+            batch_size: Batch size
+            shuffle: Whether to shuffle
+            split: Local split to use ('train' or 'test')
+            fraction: Fraction of data to use (0-1), e.g., 0.01 for 1% of this client's data
         """
         base_dataset = self.get_client_dataset(client_idx, split=split)
         
-        # 如果只使用部分数据，随机采样一个子集
+        # If only using a fraction of data, random sample a subset
         if 0.0 < fraction < 1.0:
             num_samples = len(base_dataset)
             subset_size = max(1, int(num_samples * fraction))
