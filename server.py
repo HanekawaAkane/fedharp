@@ -1,6 +1,6 @@
 """
-Fed-HARP 服务器实现。
-处理异构层分配、陈旧度跟踪以及陈旧度加权的聚合逻辑。
+Fed-HARP Server Implementation.
+Handles heterogeneous layer allocation, staleness tracking, and staleness-weighted aggregation logic.
 """
 
 import torch
@@ -12,14 +12,14 @@ from models import LoRALinear, get_lora_layer_names
 
 class FedHarpServer:
     """
-    Fed-HARP 联邦学习服务器。
+    Fed-HARP Federated Learning Server.
     
-    核心功能:
-    - 生成分配映射 (Allocation Map): 
-        * 支持随机分配 (初始阶段)
-        * 支持基于 B 矩阵敏感度的分配 (High Sensitivity First)
-    - 跟踪陈旧度 (Staleness): 记录每个客户端每个层有多少轮未更新
-    - 执行陈旧度衰减聚合 (Staleness-Weighted Aggregation): 对陈旧更新进行降权
+    Core Functions:
+    - Generate Allocation Map: 
+        * Supports random allocation (initial phase)
+        * Supports B-matrix sensitivity-based allocation (High Sensitivity First)
+    - Track Staleness: Records how many rounds each layer of each client has not been updated.
+    - Execute Staleness-Weighted Aggregation: Down-weights stale updates.
     """
     
     def __init__(
@@ -28,22 +28,22 @@ class FedHarpServer:
         lora_layers: Dict[str, LoRALinear],
         num_clients: int,
         allocation_ratio: float = 0.5,
-        aggregation_lr: float = 1.0,  # 注意：如果是加权平均，这里的 LR 通常设为 1.0，或者作为全局学习率
+        aggregation_lr: float = 1.0, 
         struct_to_data_rounds: int = 20,
         seed: int = 42,
         method: str = "fedharp",
         sensitivity_momentum: float = 0.8,
     ):
         """
-        初始化服务器。
+        Initialize the server.
         
-        参数:
-            model: 全局模型实例
-            lora_layers: LoRA 层字典
-            num_clients: 客户端总数
-            allocation_ratio: 每个客户端更新的层比例 (例如 0.5 表示 50%)
-            aggregation_lr: 服务器聚合学习率 (eta)。如果使用标准 FedAvg 逻辑，这通常是 1.0。
-            seed: 随机分配种子
+        Args:
+            model: Global model instance.
+            lora_layers: Dictionary of LoRA layers.
+            num_clients: Total number of clients.
+            allocation_ratio: Ratio of layers updated by each client (e.g., 0.5 means 50%).
+            aggregation_lr: Server aggregation learning rate (eta). usually 1.0 for standard FedAvg logic.
+            seed: Random allocation seed.
         """
         self.model = model
         self.lora_layers = lora_layers
@@ -54,24 +54,24 @@ class FedHarpServer:
         self.seed = seed
         self.method = "fedharp" if str(method).lower() == "fedanon" else method
         
-        # 获取排序后的层名称列表
+        # Get sorted list of layer names
         self.layer_names = get_lora_layer_names(lora_layers)
         self.num_layers = len(self.layer_names)
         
-        # 陈旧度跟踪表: staleness[client_id][layer_name] = 自上次更新以来的轮数
+        # Staleness tracking table: staleness[client_id][layer_name] = rounds since last update
         self.staleness: Dict[int, Dict[str, int]] = {
             client_id: {layer_name: 0 for layer_name in self.layer_names}
             for client_id in range(num_clients)
         }
         
-        # 存储客户端上传的敏感度 (B 矩阵范数)
+        # Store client sensitivities (B matrix norms)
         # client_sensitivities[client_id][layer_name] = float value
         self.client_sensitivities: Dict[int, Dict[str, float]] = {}
         
-        # 当前轮次
+        # Current round
         self.current_round = 0
 
-        # 记录每层被选中的总次数，用于公平性加权
+        # Record total selection counts per layer for fairness weighting
         self.layer_selection_counts: Dict[str, int] = {
             layer_name: 0 for layer_name in self.layer_names
         }
@@ -88,13 +88,13 @@ class FedHarpServer:
             m = 0.99
         self.sensitivity_momentum = m
         
-        # 设置随机种子
+        # Set random seed
         np.random.seed(seed)
     
     def update_client_sensitivities(self, client_id: int, sensitivities: Dict[str, float]):
         """
-        接收并更新客户端的 B 矩阵敏感度信息。
-        这些信息将用于下一轮的分配。
+        Receive and update client B-matrix sensitivity information.
+        This information will be used for allocation in the next round.
         """
         prev = self.client_sensitivities.get(client_id, {})
         if prev is None or len(prev) == 0:
@@ -137,7 +137,7 @@ class FedHarpServer:
     
     def _z_score_normalize(self, scores: np.ndarray) -> np.ndarray:
         """
-        Z-Score 归一化：将原始分数转换为标准正态分布，放大微小差异
+        Z-Score Normalization: Converts raw scores to standard normal distribution to amplify small differences.
         """
         if scores.size == 0:
             return scores
@@ -149,12 +149,12 @@ class FedHarpServer:
 
     def _softmax(self, scores: np.ndarray) -> np.ndarray:
         """
-        Softmax 将分数转换为概率分布（Sum = 1）
+        Softmax converts scores to a probability distribution (Sum = 1).
         """
         if scores.size == 0:
             return scores
         max_score = np.max(scores)
-        exp_scores = np.exp(scores - max_score)  # 防止数值溢出
+        exp_scores = np.exp(scores - max_score)  # Prevent numerical overflow
         sum_exp = np.sum(exp_scores)
         if sum_exp == 0:
             return np.ones_like(scores) / scores.size
@@ -162,13 +162,13 @@ class FedHarpServer:
     
     def generate_allocation_map(self) -> Dict[int, Set[str]]:
         """
-        生成当前轮次的分配映射 (Heterogeneous Allocation)。
+        Generate allocation map for the current round (Heterogeneous Allocation).
         
-        策略:
-        1. 结构权重 (早期占主导): 输入近的层优先 + 层选择均匀分布。
-        2. 数据权重 (随轮次增大): 客户端侧 B 的梯度变化范数 + 公平性权重。
-        3. 随着轮数增加，数据权重比例上升；初始结构权重为 1.0。
-        4. 使用 Z-Score 归一化 + Softmax 将结构/数据分数转为概率，再几何加权平均。
+        Strategy:
+        1. Structure Weight (Dominant in early phase): Prioritize layers closer to input + Uniform layer selection distribution.
+        2. Data Weight (Increases with rounds): Norm of gradient changes in B at client side + Fairness weight.
+        3. As rounds increase, data weight proportion rises; initial structure weight is 1.0.
+        4. Use Z-Score normalization + Softmax to convert structure/data scores to probabilities, then apply geometric weighted averaging.
         """
         method = str(self.method).lower()
         if method in {"fedsalora", "fedsa-lora", "fedsa_lora", "flora"}:
@@ -251,13 +251,13 @@ class FedHarpServer:
             structure_weight = self._get_structure_weight()
             data_weight = 1.0 - structure_weight
 
-        # 1) 计算全局结构分数（所有客户端共享）
+        # 1) Calculate Global Structure Scores (Shared across all clients)
         struct_scores = []
         max_depth = max(self._get_layer_depth(gid) for gid in group_ids) if len(group_ids) > 0 else 0
         for gid in group_ids:
             member_counts = [self.layer_selection_counts.get(n, 0) for n in group_to_layers.get(gid, [])]
             count = float(np.mean(member_counts)) if len(member_counts) > 0 else 0.0
-            uniform_weight = 1.0
+            uniform_weight = 1.0 / (1.0 + np.sqrt(count))
             depth = self._get_layer_depth(gid)
             if method == "fedhello":
                 depth_idx = int(depth)
@@ -266,13 +266,13 @@ class FedHarpServer:
                 struct_scores.append(proximity_weight * uniform_weight)
             else:
                 normalized_depth = (depth + 1) / (max_depth + 1)
-                # 让靠近输入（depth 小）和靠近输出（depth 大）的层获得更高权重
-                # 使用倒 V 形：proximity_weight = 1 - |2*normalized_depth - 1| ^ gamma
-                gamma = 0.5  # 控制“倒 V”陡峭程度，越小越陡
-                proximity_weight = 0.1 + 0.9*np.abs(2.0 * normalized_depth - 1.0) ** gamma
+                # Give higher weight to layers closer to input (small depth) and output (large depth)
+                # Use inverted V-shape: proximity_weight = 1 - |2*normalized_depth - 1| ^ gamma
+                gamma = 0.5  # Controls the steepness, smaller is steeper
+                proximity_weight = 0.1 + 0.9 * np.abs(2.0 * normalized_depth - 1.0) ** gamma
                 struct_scores.append(proximity_weight * uniform_weight)
         struct_scores = np.array(struct_scores, dtype=np.float64)
-        # Z-Score 归一化后 Softmax 成概率
+        # Softmax after Z-Score Normalization
         struct_probs = self._softmax(self._z_score_normalize(struct_scores))
 
         for client_id in range(self.num_clients):
@@ -303,7 +303,7 @@ class FedHarpServer:
                         merged[k] = float(merged.get(k, 0.0)) + float(v or 0.0)
                 client_sense = merged
 
-            # 2) 计算该客户端的数据分数
+            # 2) Calculate Data Scores for this client
             data_scores = []
             for gid in group_ids:
                 member_scores = []
@@ -314,7 +314,7 @@ class FedHarpServer:
                     member_scores.append(score)
                 data_scores.append(float(np.mean(member_scores)) if len(member_scores) > 0 else 1e-12)
             data_scores = np.array(data_scores, dtype=np.float64)
-            # Z-Score 归一化后 Softmax 成概率
+            # Softmax after Z-Score Normalization
             data_probs = self._softmax(self._z_score_normalize(data_scores))
 
             if method == "fedharp_r":
@@ -326,7 +326,7 @@ class FedHarpServer:
                 final_probs = np.exp(log_final)
                 final_probs /= np.sum(final_probs)
 
-            # 4) 按概率采样
+            # 4) Sample based on probabilities
             if final_probs is None:
                 selected_group_ids = np.random.choice(
                     group_ids,
@@ -345,32 +345,32 @@ class FedHarpServer:
                 allocated_layers.update(group_to_layers.get(str(gid), []))
             allocation_map[client_id] = allocated_layers
 
-            # 5) 更新全局选中计数
+            # 5) Update global selection counts
             for name in allocated_layers:
                 self.layer_selection_counts[name] += 1
 
         return allocation_map
-               
+                
     
     def update_staleness(self, allocation_map: Dict[int, Set[str]]):
         """
-        更新陈旧度计数器。
-        如果某层本轮被分配，陈旧度重置为 0；否则陈旧度 +1。
+        Update staleness counters.
+        If a layer is allocated this round, staleness resets to 0; otherwise, staleness increments by 1.
         """
         for client_id in range(self.num_clients):
             allocated_layers = allocation_map.get(client_id, set())
             
             for layer_name in self.layer_names:
                 if layer_name in allocated_layers:
-                    # 客户端本轮更新了该层，重置陈旧度
+                    # Client updated this layer this round, reset staleness
                     self.staleness[client_id][layer_name] = 0
                 else:
-                    # 客户端本轮未更新该层，陈旧度增加
+                    # Client did not update this layer, increment staleness
                     self.staleness[client_id][layer_name] += 1
     
     def get_staleness_dampening(self, client_id: int, layer_name: str) -> float:
         """
-        计算陈旧度阻尼因子: α = 1 / sqrt(1 + τ)
+        Calculate staleness dampening factor: alpha = 1 / sqrt(1 + tau)
         """
         tau = self.staleness[client_id][layer_name]
         return 1.0 / np.sqrt(1.0 + tau)
@@ -383,21 +383,21 @@ class FedHarpServer:
         allocation_map: Dict[int, Set[str]]
     ):
         """
-        聚合客户端提交的 A/B 矩阵更新。
+        Aggregate A/B matrix updates submitted by clients.
         
-        修正后的聚合逻辑 (Layer-wise Weighted Average):
-        对于每一层 j:
+        Aggregation Logic (Layer-wise Weighted Average):
+        For each layer j:
             Delta_j = (Sum_{k in Active} n_k * alpha_k * Delta_{k,j}) / (Sum_{k in Active} n_k)
         
-        参数:
-            client_updates_A: 客户端 ID 到 delta_A 的映射
-            client_updates_B: 客户端 ID 到 delta_B 的映射（可选）
-            client_sample_counts: 客户端 ID 到其样本数量的映射 (用于加权)
-            allocation_map: 当前轮次的分配映射
+        Args:
+            client_updates_A: Mapping from Client ID to delta_A
+            client_updates_B: Mapping from Client ID to delta_B (Optional)
+            client_sample_counts: Mapping from Client ID to sample count (for weighting)
+            allocation_map: Allocation map for the current round
         """
         if self.method == "flora":
             if client_updates_B is None:
-                raise ValueError("flora 需要 client_updates_B")
+                raise ValueError("flora requires client_updates_B")
 
             for layer_name in self.layer_names:
                 pieces_A = []
@@ -452,7 +452,7 @@ class FedHarpServer:
             use_staleness = False
             use_sample_weights = False
         else:
-            raise ValueError(f"未知 method: {self.method}")
+            raise ValueError(f"Unknown method: {self.method}")
 
         if method == "fedharp_a":
             weighted_updates_sum_A = {
@@ -489,7 +489,7 @@ class FedHarpServer:
         total_weights_B = None
         if aggregate_B:
             if client_updates_B is None:
-                raise ValueError(f"{self.method} 需要 client_updates_B")
+                raise ValueError(f"{self.method} requires client_updates_B")
             weighted_updates_sum_B = {
                 layer_name: torch.zeros_like(self.lora_layers[layer_name].get_B())
                 for layer_name in self.layer_names
@@ -579,27 +579,27 @@ class FedHarpServer:
         )
     
     def get_global_A_matrices(self) -> Dict[str, torch.Tensor]:
-        """获取所有全局 A 矩阵"""
+        """Get all global A matrices"""
         return {name: layer.get_A() for name, layer in self.lora_layers.items()}
 
     def get_global_B_matrices(self) -> Dict[str, torch.Tensor]:
-        """获取所有全局 B 矩阵"""
+        """Get all global B matrices"""
         return {name: layer.get_B() for name, layer in self.lora_layers.items()}
     
     def set_global_A_matrices(self, A_matrices: Dict[str, torch.Tensor]):
-        """设置全局 A 矩阵 (用于初始化)"""
+        """Set global A matrices (for initialization)"""
         for name, A in A_matrices.items():
             if name in self.lora_layers:
                 self.lora_layers[name].set_A(A)
 
     def set_global_B_matrices(self, B_matrices: Dict[str, torch.Tensor]):
-        """设置全局 B 矩阵 (用于初始化)"""
+        """Set global B matrices (for initialization)"""
         for name, B in B_matrices.items():
             if name in self.lora_layers:
                 self.lora_layers[name].set_B(B)
     
     def get_staleness_stats(self) -> Dict[str, float]:
-        """获取陈旧度统计信息"""
+        """Get staleness statistics"""
         all_staleness = []
         for client_staleness in self.staleness.values():
             all_staleness.extend(client_staleness.values())
@@ -615,38 +615,38 @@ class FedHarpServer:
         }
     
     def print_allocation_stats(self, allocation_map: Dict[int, Set[str]]):
-        """打印本轮分配的统计信息"""
-        print(f"\n第 {self.current_round} 轮分配统计:")
+        """Print allocation statistics for the current round"""
+        print(f"\nRound {self.current_round} Allocation Stats:")
         print("-" * 60)
         
-        # 统计每层被多少客户端选中
+        # Count how many clients selected each layer
         layer_client_count = {layer_name: 0 for layer_name in self.layer_names}
         for client_id, allocated_layers in allocation_map.items():
             for layer_name in allocated_layers:
                 layer_client_count[layer_name] += 1
         
-        # 打印陈旧度统计
+        # Print staleness stats
         staleness_stats = self.get_staleness_stats()
-        print(f"层级覆盖: 最小={min(layer_client_count.values())}, 最大={max(layer_client_count.values())}")
-        print(f"系统陈旧度: 均值={staleness_stats['mean']:.2f}, 最大值={staleness_stats['max']}")
+        print(f"Layer Coverage: Min={min(layer_client_count.values())}, Max={max(layer_client_count.values())}")
+        print(f"System Staleness: Mean={staleness_stats['mean']:.2f}, Max={staleness_stats['max']}")
         
-        # 打印公平性/选中次数统计
-        print("公平性计数 (Top-5 最常选中的层):")
+        # Print fairness/selection count stats
+        print("Fairness Counts (Top-5 most selected layers):")
         sorted_counts = sorted(self.layer_selection_counts.items(), key=lambda x: x[1], reverse=True)
         for name, count in sorted_counts[:5]:
-            print(f"  {name}: {count} 次 (公平性权重: {1.0:.4f})")
+            print(f"  {name}: {count} times (Fairness weight: {1.0:.4f})")
 
         structure_weight = self._get_structure_weight()
         data_weight = 1.0 - structure_weight
         if self.client_sensitivities:
-            print(f"分配权重: 结构={structure_weight:.2f}, 数据={data_weight:.2f} (收集了 {len(self.client_sensitivities)} 个客户端数据)")
+            print(f"Allocation Weights: Structure={structure_weight:.2f}, Data={data_weight:.2f} (Collected data from {len(self.client_sensitivities)} clients)")
         else:
-            print(f"分配权重: 结构={structure_weight:.2f}, 数据={data_weight:.2f} ")
+            print(f"Allocation Weights: Structure={structure_weight:.2f}, Data={data_weight:.2f} ")
             
         print("-" * 60 + "\n")
     
     def start_round(self) -> Dict[int, Set[str]]:
-        """开始新的一轮"""
+        """Start a new round"""
         self.current_round += 1
         allocation_map = self.generate_allocation_map()
         if str(self.method).lower().startswith("fedharp") or str(self.method).lower() == "fedanon":
@@ -654,4 +654,3 @@ class FedHarpServer:
         return allocation_map
 
 
-FedAnonServer = FedHarpServer
