@@ -1,6 +1,6 @@
 """
-Fed-HARP 联邦学习模拟主程序。
-负责初始化环境、加载数据、构建模型以及执行联邦训练循环。
+Fed-HARP Federated Learning Simulation Main Program.
+Responsible for initializing the environment, loading data, building models, and executing the federated training loop.
 """
 
 from __future__ import annotations
@@ -13,48 +13,48 @@ from typing import Dict, List, Set
 
 
 def parse_args(argv=None):
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description="Fed-HARP: 联邦非对称非平稳优化与原生隐私")
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="Fed-HARP: Federated Asymmetric Non-stationary Optimization with Native Privacy")
     
-    # 数据集参数
+    # Dataset arguments
     parser.add_argument("--data_dir", type=str, default="./data",
-                        help="CIFAR-10 数据集目录")
+                        help="CIFAR-10 dataset directory")
     parser.add_argument("--dataset", type=str, default="cifar10", choices=["cifar10", "cifar100"],
-                        help="数据集名称 (cifar10/cifar100，默认: cifar10)")
+                        help="Dataset name (cifar10/cifar100, default: cifar10)")
     parser.add_argument("--alpha", type=float, default=0.5,
-                        help="Non-IID Dirichlet 分布参数 (默认: 0.5)")
+                        help="Non-IID Dirichlet parameter (default: 0.5)")
     parser.add_argument("--client_splits", type=str, default="0.9,0.1",
-                        help="每个客户端本地 train/test 划分比例，例如 '0.9,0.1'")
+                        help="Local train/test split ratio per client, e.g., '0.9,0.1'")
     parser.add_argument("--data_fraction", type=float, default=1.0,
-                        help="每个客户端使用的训练数据比例 (0-1, 如 0.01 表示 1%% 数据；默认: 1.0)")
+                        help="Fraction of training data used per client (0-1, e.g. 0.01 means 1%%; default: 1.0)")
     
-    # 模型参数
+    # Model arguments
     parser.add_argument("--model_name", type=str, default="vit_base_patch16_224",
-                        help="ViT 模型名称 (默认: vit_base_patch16_224)")
+                        help="ViT model name (default: vit_base_patch16_224)")
     parser.add_argument("--pretrained", action="store_true",
-                        help="是否使用预训练权重")
+                        help="Whether to use pretrained weights")
     parser.add_argument("--pretrained_source", type=str, default="local", choices=["modelscope", "local"],
-                        help="预训练权重来源 (默认: modelscope)")
+                        help="Source of pretrained weights (default: modelscope)")
     parser.add_argument("--pretrained_path", type=str, default="vit",
-                        help="本地 pretrained checkpoint 路径 (pretrained_source=local)")
+                        help="Local pretrained checkpoint path (pretrained_source=local)")
     parser.add_argument("--ms_model_id", type=str, default=None,
-                        help="ModelScope 模型 ID (pretrained_source=modelscope)")
+                        help="ModelScope model ID (pretrained_source=modelscope)")
     parser.add_argument("--ms_revision", type=str, default=None,
-                        help="ModelScope revision/tag/commit (可选)")
+                        help="ModelScope revision/tag/commit (optional)")
     parser.add_argument("--ms_cache_dir", type=str, default=None,
-                        help="ModelScope 缓存目录 (可选)")
+                        help="ModelScope cache directory (optional)")
     parser.add_argument("--ms_checkpoint_file", type=str, default=None,
-                        help="ModelScope snapshot 内 checkpoint 相对路径 (可选)")
+                        help="Relative path of checkpoint in ModelScope snapshot (optional)")
     parser.add_argument("--hf_endpoint", type=str, default=None,
-                        help="HuggingFace Hub 端点/镜像 (如 https://hf-mirror.com)")
+                        help="HuggingFace Hub endpoint/mirror (e.g., https://hf-mirror.com)")
     parser.add_argument("--lora_rank", type=int, default=8,
-                        help="LoRA 秩 (默认: 8)")
+                        help="LoRA rank (default: 8)")
     parser.add_argument("--lora_alpha", type=float, default=16.0,
-                        help="LoRA alpha 缩放因子 (默认: 16.0)")
+                        help="LoRA alpha scaling factor (default: 16.0)")
     parser.add_argument("--lora_dropout", type=float, default=0.0,  
-                        help="LoRA dropout 率 (默认: 0.0)")
+                        help="LoRA dropout rate (default: 0.0)")
     
-    # 联邦学习参数
+    # Federated Learning arguments
     parser.add_argument("--method", type=str, default="fedharp",
                         choices=[
                             "fedharp",
@@ -71,53 +71,53 @@ def parse_args(argv=None):
                             "fedsa_lora",
                             "FedSA-LoRA",
                         ],
-                        help="对比方法 (默认: fedharp)")
+                        help="Comparison method (default: fedharp)")
     parser.add_argument("--num_clients", type=int, default=10,
-                        help="客户端总数 (默认: 10)")
+                        help="Total number of clients (default: 10)")
     parser.add_argument("--num_rounds", type=int, default=1,
-                        help="联邦训练轮数 (默认: 1)")
+                        help="Number of federated training rounds (default: 1)")
     parser.add_argument("--clients_per_round", type=int, default=None,
-                        help="每轮选中的客户端数量 (默认: 全部)")
+                        help="Number of clients selected per round (default: all)")
     parser.add_argument("--heterogeneity_type", type=str, default="6-3-1", choices=["uniform", "6-3-1", "1-1-1"],
-                        help="客户端资源异构类型: 'uniform'(全部相同) 或 '6-3-1'(模拟高中低资源分布)")
+                        help="Client resource heterogeneity type: 'uniform' (all same) or '6-3-1' (simulating High/Mid/Low resource distribution)")
     parser.add_argument("--allocation_ratio", type=float, default=0.5,
-                        help="基础分配比例 (在 uniform 模式下使用，或作为低资源基准)")
+                        help="Base allocation ratio (used in uniform mode or as low-resource baseline)")
     parser.add_argument("--aggregation_lr", type=float, default=1.0,
-                        help="服务器聚合学习率 eta (默认: 1.0)")
+                        help="Server aggregation learning rate eta (default: 1.0)")
     parser.add_argument("--struct_to_data_rounds", type=int, default=20,
-                        help="结构权重到数据权重的过渡轮数 (默认: 20)")
+                        help="Number of rounds for transition from structure weight to data weight (default: 20)")
     
-    # 训练参数
+    # Training arguments
     parser.add_argument("--batch_size", type=int, default=128,
-                        help="批次大小 (默认: 128)")
+                        help="Batch size (default: 128)")
     parser.add_argument("--client_lr", type=float, default=0.01,
-                        help="客户端本地学习率 (默认: 0.01)")
+                        help="Client local learning rate (default: 0.01)")
     parser.add_argument("--num_epochs", type=int, default=1,
-                        help="每轮本地训练的 Epoch 数 (默认: 1)")
+                        help="Number of local epochs per round (default: 1)")
     parser.add_argument("--warmup_steps", type=int, default=10,
-                        help="B 矩阵预热对齐的步数 (默认: 10)")
+                        help="Steps for B-matrix warmup alignment (default: 10)")
     parser.add_argument("--warmup_lr", type=float, default=0.0001,
-                        help="预热阶段的学习率 (默认: 0.0001)")
+                        help="Learning rate during warmup phase (default: 0.0001)")
     parser.add_argument("--b_train_every", type=int, default=5,
-                        help="每隔多少轮通信后触发一次 B-only 训练 (默认: 5)")
+                        help="Trigger B-only training every N rounds (default: 5)")
     parser.add_argument("--b_num_epochs", type=int, default=1,
-                        help="B-only 阶段本地训练的 Epoch 数 (默认: 1)")
+                        help="Number of local epochs during B-only phase (default: 1)")
     
-    # 评估参数
+    # Evaluation arguments
     parser.add_argument("--eval_every", type=int, default=1,
-                        help="每多少轮评估一次 (默认: 1)")
+                        help="Evaluate every N rounds (default: 1)")
     parser.add_argument("--test_batch_size", type=int, default=100,
-                        help="测试批次大小 (默认: 100)")
+                        help="Test batch size (default: 100)")
     
-    # 系统参数
+    # System arguments
     parser.add_argument("--seed", type=int, default=42,
-                        help="随机种子 (默认: 42)")
+                        help="Random seed (default: 42)")
     parser.add_argument("--device", type=str, default="cuda",
-                        help="使用的设备 (cuda/cpu, 默认: 自动检测)")
+                        help="Device to use (cuda/cpu, default: auto-detect)")
     parser.add_argument("--save_checkpoints", action="store_true",
-                        help="是否保存模型检查点")
+                        help="Whether to save model checkpoints")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints",
-                        help="检查点保存目录")
+                        help="Directory to save checkpoints")
     
     return parser.parse_args(args=argv)
 
@@ -132,15 +132,15 @@ def _strip_double_dash(argv):
 
 def generate_client_resources(num_clients: int, heterogeneity_type: str, base_ratio: float) -> List[float]:
     """
-    生成每个客户端的资源能力（即可以训练的层比例）。
+    Generate resource capabilities (ratio of trainable layers) for each client.
     
-    参数:
-        num_clients: 客户端总数
-        heterogeneity_type: 'uniform' 或 '6-3-1'
-        base_ratio: 基础比例
+    Args:
+        num_clients: Total number of clients
+        heterogeneity_type: 'uniform' or '6-3-1'
+        base_ratio: Base ratio
         
-    返回:
-        List[float]: 每个客户端的分配比例列表
+    Returns:
+        List[float]: List of allocation ratios for each client
     """
     if heterogeneity_type == "uniform":
         return [base_ratio] * num_clients
@@ -149,28 +149,21 @@ def generate_client_resources(num_clients: int, heterogeneity_type: str, base_ra
         n_mid = int(0.33 * num_clients)
         n_high = num_clients - n_low - n_mid
         ratios = []
-        ratios.extend([base_ratio] * n_low)           # Low
+        ratios.extend([base_ratio] * n_low)            # Low
         ratios.extend([min(1.0, base_ratio * 1.5)] * n_mid) # Mid
         ratios.extend([1.0] * n_high)
         np.random.shuffle(ratios)
         return ratios
     elif heterogeneity_type == "6-3-1":
-        # 模拟 Fed-HeLLo 论文中的资源分布
-        # 60% 低资源 (基准比例, 如 0.25 或 0.5)
-        # 30% 中资源 (基准 * 1.5 或 0.75)
-        # 10% 高资源 (全量训练 1.0)
         n_low = int(0.6 * num_clients)
         n_mid = int(0.3 * num_clients)
         n_high = num_clients - n_low - n_mid
         
-        # 定义不同等级的层比例
-        # 注意：这里假设 base_ratio 是最低标准
         ratios = []
-        ratios.extend([base_ratio] * n_low)           # Low
+        ratios.extend([base_ratio] * n_low)            # Low
         ratios.extend([min(1.0, base_ratio * 1.5)] * n_mid) # Mid
-        ratios.extend([1.0] * n_high)                 # High (Full Layers)
+        ratios.extend([1.0] * n_high)                  # High (Full Layers)
         
-        # 打乱分配，使得 ID 不直接对应资源等级
         np.random.shuffle(ratios)
         return ratios
     
@@ -182,7 +175,7 @@ def evaluate_global_model(
     test_loader: DataLoader,
     device: torch.device
 ) -> Dict[str, float]:
-    """在测试集上评估全局模型"""
+    """Evaluate global model on test set"""
     model.eval()
     test_loss = 0.0
     correct = 0
@@ -253,7 +246,7 @@ def _b_only_trainable_param_numel(client_lora_layers: Dict[str, nn.Module], trai
 
 
 def vision_main(argv=None):
-    """联邦学习主循环"""
+    """Federated Learning Main Loop"""
     raw_argv = sys.argv[1:] if argv is None else list(argv)
     args = parse_args(argv)
     if str(args.method).lower() == "fedanon":
@@ -268,7 +261,6 @@ def vision_main(argv=None):
     if args.hf_endpoint:
         os.environ["HF_ENDPOINT"] = args.hf_endpoint
     
-    # 设置随机种子
     global np
     global torch
     global nn
@@ -311,13 +303,11 @@ def vision_main(argv=None):
 
     set_seed(args.seed)
     
-    # 获取计算设备
     if args.device:
         device = torch.device(args.device)
     else:
         device = get_device()
     
-    # 创建目录
     if args.save_checkpoints:
         create_directories(args.checkpoint_dir)
 
@@ -330,7 +320,6 @@ def vision_main(argv=None):
     log_filename = f"Traininglog-{safe_method}-alpha{safe_alpha}-{safe_dataset}-{safe_model}-{safe_b_train_every}--{safe_heterogeneity_type}.txt"
     log_path = os.path.join(args.checkpoint_dir if args.save_checkpoints else ".", log_filename)
 
-    # 将本次训练的配置写入日志文件（覆盖旧内容）
     try:
         with open(log_path, "w", encoding="utf-8") as f:
             f.write("Training configuration (arguments):\n")
@@ -338,22 +327,21 @@ def vision_main(argv=None):
                 f.write(f"{k} = {v}\n")
             f.write("\nRound logs:\n")
     except Exception as e:
-        print(f"[警告] 无法写入日志文件 {log_path}: {e}")
+        print(f"[WARNING] Cannot write log file {log_path}: {e}")
     
     print("\n" + "="*80)
-    print("Fed-HARP: 联邦非对称非平稳优化与原生隐私 (Fed-HeLLo + FedSA 增强版)")
+    print("Fed-HARP: Federated Asymmetric Non-stationary Optimization with Native Privacy")
     print("="*80)
-    print(f"配置信息:")
-    print(f"  客户端数量: {args.num_clients}")
-    print(f"  训练轮数: {args.num_rounds}")
-    print(f"  方法: {args.method}")
-    print(f"  资源异构模式: {args.heterogeneity_type} (基础比例: {args.allocation_ratio})")
-    print(f"  LoRA 参数: Rank={args.lora_rank}, Alpha={args.lora_alpha}")
-    print(f"  Non-IID 参数 (Alpha): {args.alpha}")
+    print(f"Configuration Info:")
+    print(f"  Num Clients: {args.num_clients}")
+    print(f"  Num Rounds: {args.num_rounds}")
+    print(f"  Method: {args.method}")
+    print(f"  Resource Heterogeneity: {args.heterogeneity_type} (Base Ratio: {args.allocation_ratio})")
+    print(f"  LoRA Params: Rank={args.lora_rank}, Alpha={args.lora_alpha}")
+    print(f"  Non-IID Params (Alpha): {args.alpha}")
     print("="*80 + "\n")
     
-    # 加载数据集
-    print(f"正在加载 {args.dataset.upper()} 数据集...")
+    print(f"Loading {args.dataset.upper()} dataset...")
     try:
         splits = [float(x) for x in args.client_splits.split(",")]
     except:
@@ -378,11 +366,9 @@ def vision_main(argv=None):
         )
         num_classes = 10
     
-    # 获取全局测试集
     global_test_loader = dataset.get_test_dataloader(batch_size=args.test_batch_size)
     
-    # 创建全局模型
-    print("\n正在创建带有 LoRA 的 Vision Transformer...")
+    print("\nCreating Vision Transformer with LoRA...")
     global_model, global_lora_layers = create_vit_model(
         model_name=args.model_name,
         num_classes=num_classes,
@@ -400,49 +386,39 @@ def vision_main(argv=None):
     global_model.to(device)
     print_model_info(global_model, global_lora_layers)
     
-    # --- 关键修改：生成异构的客户端资源能力 ---
-    print(f"正在生成客户端资源分布 ({args.heterogeneity_type})...")
+    print(f"Generating client resource distribution ({args.heterogeneity_type})...")
     client_capacities = generate_client_resources(
         args.num_clients, 
         args.heterogeneity_type, 
         args.allocation_ratio
     )
-    # 打印资源分布概览
     avg_cap = np.mean(client_capacities)
-    print(f"  客户端层训练比例: 平均={avg_cap:.2f}, 最小={min(client_capacities):.2f}, 最大={max(client_capacities):.2f}")
+    print(f"  Client layer training ratio: Mean={avg_cap:.2f}, Min={min(client_capacities):.2f}, Max={max(client_capacities):.2f}")
     if args.num_clients <= 20:
-        print(f"  详细分布: {['{:.2f}'.format(c) for c in client_capacities]}")
+        print(f"  Detailed distribution: {['{:.2f}'.format(c) for c in client_capacities]}")
 
-    # 初始化服务器
-    print("正在初始化 Fed-HARP 服务器...")
-    # 注意：这里我们假设 server.py 已经更新了 __init__ 来接收 client_capacities
-    # 如果 server.py 尚未更新，它可能会忽略这个参数，但我们在 main 中显式生成它以体现逻辑。
-    # 为了兼容旧版 server 代码，我们保留 allocation_ratio 参数，但期望 server 使用 client_capacities
+    print("Initializing Fed-HARP Server...")
     server = FedHarpServer(
         model=global_model,
         lora_layers=global_lora_layers,
         num_clients=args.num_clients,
         method=args.method,
-        allocation_ratio=args.allocation_ratio, # 作为默认值
+        allocation_ratio=args.allocation_ratio, 
         aggregation_lr=args.aggregation_lr,
         struct_to_data_rounds=args.struct_to_data_rounds,
         seed=args.seed
     )
-    # 手动将生成的异构能力注入到 server (模拟 Server 知晓客户端能力)
     if hasattr(server, 'client_layer_counts'):
-        # 将比例转换为具体的层数
         num_total_layers = len(global_lora_layers)
         for cid, cap in enumerate(client_capacities):
             server.client_layer_counts[cid] = max(1, int(num_total_layers * cap))
-        print("  成功将异构资源配置注入服务器。")
+        print("  Successfully injected heterogeneous resource config into server.")
     
-    # 初始化客户端
     clients = []
     client_sample_counts = {}
     
-    print(f"\n正在初始化 {args.num_clients} 个客户端...")
+    print(f"\nInitializing {args.num_clients} clients...")
     for client_id in range(args.num_clients):
-        # 获取本地训练集
         train_loader = dataset.get_client_dataloader(
             client_id,
             batch_size=args.batch_size,
@@ -450,7 +426,6 @@ def vision_main(argv=None):
             split="train",
             fraction=args.data_fraction
         )
-        # 获取本地测试集
         client_test_loader = dataset.get_client_dataloader(
             client_id,
             batch_size=args.test_batch_size,
@@ -461,7 +436,6 @@ def vision_main(argv=None):
         
         client_sample_counts[client_id] = len(train_loader.dataset)
         
-        # 创建客户端模型副本
         client_model, client_lora_layers = create_client_model(
             global_model,
             global_lora_layers
@@ -482,17 +456,15 @@ def vision_main(argv=None):
         )
         clients.append(client)
         if client_id < 5:
-            print(f"  客户端 {client_id}: {len(train_loader.dataset)} 训练样本")
+            print(f"  Client {client_id}: {len(train_loader.dataset)} training samples")
     
     if args.num_clients > 5:
-        print(f"  ... (剩余 {args.num_clients - 5} 个客户端已初始化)")
+        print(f"  ... ({args.num_clients - 5} remaining clients initialized)")
     
-    # 确定每轮参与的客户端
     clients_per_round = args.clients_per_round or args.num_clients
     
-    # 开始联邦学习主循环
     print("\n" + "="*80)
-    print("开始 Fed-HARP 联邦学习流程")
+    print("Starting Fed-HARP Federated Learning Process")
     print("="*80)
     
     best_accuracy = 0.0
@@ -506,23 +478,20 @@ def vision_main(argv=None):
         round_start_time = time.time()
         
         print(f"\n{'='*80}")
-        print(f"第 {round_num}/{args.num_rounds} 轮")
+        print(f"Round {round_num}/{args.num_rounds}")
         print(f"{'='*80}")
         
-        # 步骤 1: 服务器生成分配映射
         allocation_map = server.start_round()
         server.print_allocation_stats(allocation_map)
         
-        # 步骤 2: 选择客户端
         selected_clients = np.random.choice(
             args.num_clients,
             size=min(clients_per_round, args.num_clients),
             replace=False
         )
         
-        print(f"本轮活跃客户端数: {len(selected_clients)}")
+        print(f"Active clients this round: {len(selected_clients)}")
         
-        # 步骤 3: 客户端接收全局 A 并执行本地训练
         global_A = server.get_global_A_matrices()
         upload_b_method = str(args.method).lower() in {"fedhello", "flora", "fedra"}
         global_B = server.get_global_B_matrices() if upload_b_method else None
@@ -547,9 +516,8 @@ def vision_main(argv=None):
                     new_b_sensitivity = client.train_B_only(b_only_layers, num_epochs=args.b_num_epochs)
                     server.update_client_sensitivities(int(client_id), new_b_sensitivity)
             
-            # 本地训练
             if i < 3:
-                print(f"  客户端 {client_id} 开始训练 (分配层数: {len(allocated_layers)})...")
+                print(f"  Client {client_id} starting training (Allocated layers: {len(allocated_layers)})...")
 
             if torch.cuda.is_available() and device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats(device)
@@ -567,7 +535,7 @@ def vision_main(argv=None):
 
             uplink_A_mb = _delta_A_nbytes(delta_A) / (1024.0 * 1024.0)
             if upload_b_method and delta_B is None:
-                raise ValueError(f"{args.method} 需要同时上传 A+B，但 delta_B 为空")
+                raise ValueError(f"{args.method} requires both A and B upload, but delta_B is empty")
             uplink_B_mb = (_delta_B_nbytes(delta_B) / (1024.0 * 1024.0)) if (upload_b_method and delta_B is not None) else 0.0
             uplink_mb = uplink_A_mb + uplink_B_mb
             comm_mb = downlink_A_mb + downlink_B_mb + uplink_mb
@@ -592,7 +560,6 @@ def vision_main(argv=None):
             if upload_b_method:
                 client_updates_B[client_id] = delta_B
             
-            # 上传 B 矩阵敏感度
             server.update_client_sensitivities(client_id, b_sensitivity)
 
             try:
@@ -604,14 +571,14 @@ def vision_main(argv=None):
                         "downlink_mb={downlink_mb:.6f}, uplink_mb={uplink_mb:.6f}\n".format(**client_metrics_ab[-1])
                     )
             except Exception as e:
-                print(f"[警告] 无法写入日志文件 {log_path}: {e}")
+                print(f"[WARNING] Cannot write log file {log_path}: {e}")
 
         if len(client_metrics_ab) > 0:
             avg_compute = float(np.mean([m["compute_tflops"] for m in client_metrics_ab]))
             avg_mem = float(np.mean([m["peak_mem_gb"] for m in client_metrics_ab]))
             avg_comm = float(np.mean([m["comm_mb"] for m in client_metrics_ab]))
             avg_time = float(np.mean([m["train_time_sec"] for m in client_metrics_ab]))
-            print(f"本轮客户端均值 (A+B): 计算={avg_compute:.4f} TFLOPs, 显存峰值={avg_mem:.4f} GB, 通信={avg_comm:.2f} MB/R, 时间={avg_time:.2f} s/R")
+            print(f"Round Client Mean (A+B): Compute={avg_compute:.4f} TFLOPs, Peak Mem={avg_mem:.4f} GB, Comm={avg_comm:.2f} MB/R, Time={avg_time:.2f} s/R")
             try:
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(
@@ -620,10 +587,9 @@ def vision_main(argv=None):
                         f"avg_comm_mb={avg_comm:.6f}, avg_train_time_sec={avg_time:.6f}\n"
                     )
             except Exception as e:
-                print(f"[警告] 无法写入日志文件 {log_path}: {e}")
+                print(f"[WARNING] Cannot write log file {log_path}: {e}")
         
-        # 步骤 4: 服务器聚合更新
-        print(f"\n服务器正在聚合来自 {len(client_updates)} 个客户端的 LoRA 更新...")
+        print(f"\nServer aggregating LoRA updates from {len(client_updates)} clients...")
         server.aggregate_matrices(
             client_updates_A=client_updates,
             client_updates_B=(client_updates_B if upload_b_method else None),
@@ -631,7 +597,6 @@ def vision_main(argv=None):
             allocation_map=allocation_map
         )
 
-        # 步骤 5: 更新全局模型用于评估
         updated_global_A = server.get_global_A_matrices()
         for name, layer in global_lora_layers.items():
             if name in updated_global_A:
@@ -643,45 +608,8 @@ def vision_main(argv=None):
                 if name in updated_global_B:
                     layer.set_B(updated_global_B[name])
         
-        # 步骤 5.5: 记录通信后的全局模型准确率 (已禁用，仅关注个性化)
-        # print(f"\n正在评估通信后的全局模型准确率...")
-        # global_model.eval()
-        # comm_accuracy_results = evaluate_global_model(
-        #     model=global_model,
-        #     test_loader=global_test_loader,
-        #     device=device
-        # )
-        # comm_accuracy = comm_accuracy_results['accuracy']
-        # comm_loss = comm_accuracy_results['loss']
-        # print(f"  [Round {round_num}] 通信后全局模型准确率: {comm_accuracy:.2f}%")
-        # print(f"  [Round {round_num}] 通信后全局模型 Loss: {comm_loss:.4f}")
-
-        # 追加写入通信后准确率到日志文件
-        # try:
-        #     with open(log_path, "a", encoding="utf-8") as f:
-        #         f.write(
-        #             f"round={round_num}, type=post_communication, "
-        #             f"accuracy={comm_accuracy:.4f}, loss={comm_loss:.6f}\n"
-        #         )
-        # except Exception as e:
-        #     print(f"[警告] 无法写入日志文件 {log_path}: {e}")
-        
-        # 更新通信后的最佳准确率
-        # if comm_accuracy > best_comm_accuracy:
-        #     best_comm_accuracy = comm_accuracy
-        #     print(f"  ✓ 通信后准确率创新高!")
-        
-        # 记录到训练历史中
-        # training_history.append({
-        #     'round': round_num,
-        #     'accuracy': comm_accuracy,
-        #     'loss': comm_loss,
-        #     'type': 'post_communication'  # 标记为通信后准确率
-        # })
-
-        # 步骤 6: 评估 (仅关注个性化)
         if round_num % args.eval_every == 0 or round_num == args.num_rounds:
-            print(f"\n正在各客户端本地 Test 集上评估 (个性化性能)...")
+            print(f"\nEvaluating on client local Test sets (Personalized Performance)...")
             
             total_weighted_correct = 0.0
             total_samples = 0
@@ -689,8 +617,6 @@ def vision_main(argv=None):
             
             for cid in range(args.num_clients):
                 client = clients[cid]
-                # fedanon: Global A + Local B
-                # 其他方法: Global A + Global B
                 eval_A = server.get_global_A_matrices()
                 eval_B = server.get_global_B_matrices() if args.method in {"fedhello", "flora","fedra"} else None
                 client.receive_global_matrices(eval_A, eval_B, method=args.method)
@@ -708,7 +634,7 @@ def vision_main(argv=None):
                 total_samples += num_samples
                 
                 if cid < 3:
-                    print(f"  客户端 {cid}: Acc={acc:.2f}%, Loss={loss:.4f}")
+                    print(f"  Client {cid}: Acc={acc:.2f}%, Loss={loss:.4f}")
 
             if total_samples > 0:
                 global_acc = 100.0 * total_weighted_correct / total_samples
@@ -717,17 +643,16 @@ def vision_main(argv=None):
                 global_acc = 0.0
                 global_loss = 0.0
 
-            print(f"\n  [Round {round_num}] 全局加权准确率 (个性化): {global_acc:.2f}%")
-            print(f"  [Round {round_num}] 全局加权 Loss: {global_loss:.4f}")
+            print(f"\n  [Round {round_num}] Global Weighted Accuracy (Personalized): {global_acc:.2f}%")
+            print(f"  [Round {round_num}] Global Weighted Loss: {global_loss:.4f}")
             
             training_history.append({
                 'round': round_num,
                 'accuracy': global_acc,
                 'loss': global_loss,
-                'type': 'personalized'  # 标记为个性化评估
+                'type': 'personalized'
             })
 
-            # 追加写入个性化评估准确率到日志文件
             try:
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(
@@ -735,13 +660,12 @@ def vision_main(argv=None):
                         f"accuracy={global_acc:.4f}, loss={global_loss:.6f}\n"
                     )
             except Exception as e:
-                print(f"[警告] 无法写入日志文件 {log_path}: {e}")
+                print(f"[WARNING] Cannot write log file {log_path}: {e}")
             
             if global_acc > best_accuracy:
                 best_accuracy = global_acc
-                print(f"  ✓ 创新高! 新的最佳准确率")
+                print(f"  ✓ New Record! Best Accuracy")
         
-        # 保存检查点
         if args.save_checkpoints and round_num % 10 == 0:
             checkpoint_path = os.path.join(
                 args.checkpoint_dir,
@@ -755,35 +679,25 @@ def vision_main(argv=None):
             )
         
         round_time = time.time() - round_start_time
-        print(f"\n第 {round_num} 轮耗时: {round_time:.2f}秒")
+        print(f"\nRound {round_num} time: {round_time:.2f} seconds")
     
-    # 最终总结
     print("\n" + "="*80)
-    print("训练完成")
+    print("Training Complete")
     print("="*80)
-    print(f"历史最佳准确率 (个性化): {best_accuracy:.2f}%")
-    # print(f"历史最佳通信后准确率: {best_comm_accuracy:.2f}%")
+    print(f"Best Historical Accuracy (Personalized): {best_accuracy:.2f}%")
     
-    # 分别显示通信后和个性化的最终准确率
-    # comm_history = [e for e in training_history if e.get('type') == 'post_communication']
     personalized_history = [e for e in training_history if e.get('type') == 'personalized']
     
-    # if comm_history:
-    #     print(f"最终轮次通信后准确率: {comm_history[-1]['accuracy']:.2f}%")
     if personalized_history:
-        print(f"最终轮次个性化准确率: {personalized_history[-1]['accuracy']:.2f}%")
+        print(f"Final Round Personalized Accuracy: {personalized_history[-1]['accuracy']:.2f}%")
     
     if len(training_history) > 0:
-        print("\n训练历史记录片段 (每10轮):")
-        # print("  通信后准确率:")
-        # for i, entry in enumerate(comm_history):
-        #     if i % 10 == 0 or i == len(comm_history) - 1:
-        #         print(f"    轮次 {entry['round']:3d}: 准确率 = {entry['accuracy']:.2f}%, Loss = {entry['loss']:.4f}")
+        print("\nTraining History Snippet (Every 10 rounds):")
         if personalized_history:
-            print("  个性化准确率:")
+            print("  Personalized Accuracy:")
             for i, entry in enumerate(personalized_history):
                 if i % 10 == 0 or i == len(personalized_history) - 1:
-                    print(f"    轮次 {entry['round']:3d}: 准确率 = {entry['accuracy']:.2f}%, Loss = {entry['loss']:.4f}")
+                    print(f"    Round {entry['round']:3d}: Accuracy = {entry['accuracy']:.2f}%, Loss = {entry['loss']:.4f}")
 
 
 def main(argv=None):
@@ -820,7 +734,7 @@ def main(argv=None):
             i += 1
         return out
 
-    entry = argparse.ArgumentParser(description="统一 Fed-HARP 实验入口", add_help=True)
+    entry = argparse.ArgumentParser(description="Unified Fed-HARP Experiment Entry Point", add_help=True)
     entry.add_argument(
         "--task",
         type=str,
@@ -869,7 +783,7 @@ def main(argv=None):
         if method == "fedra":
             rest = _remove_flag_with_value(rest, "--method")
         return fedra_main(rest)
-    raise SystemExit(f"未知 task: {task}")
+    raise SystemExit(f"Unknown task: {task}")
 
 
 if __name__ == "__main__":
