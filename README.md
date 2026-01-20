@@ -207,16 +207,17 @@ python main.py --task vision -- \
 
 ```bash
 python main.py --task vision -- \
-    --num_clients 10 \
-    --num_rounds 100 \
+    --num_clients 20 \
+    --num_rounds 20 \
     --allocation_ratio 0.5 \
-    --alpha 0.5 \
-    --lora_rank 8 \
+    --alpha 0.1 \
+    --lora_rank 16 \
     --client_lr 0.001 \
-    --num_epochs 3 \
+    --num_epochs 1 \
     --warmup_steps 10 \
     --aggregation_lr 0.1 \
-    --eval_every 5 \
+    --batch_size 64
+    --eval_every 2 \
     --save_checkpoints \
     --seed 42
 
