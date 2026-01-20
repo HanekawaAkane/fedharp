@@ -1,0 +1,25 @@
+# CPU版本安装 (不推荐，速度较慢):
+# pip install torch torchvision torchaudio
+# pip install numpy>=1.24.0 timm>=0.9.0
+
+# GPU版本安装 (推荐):
+# CUDA 11.8: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# CUDA 12.1: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# 然后: pip install numpy>=1.24.0 timm>=0.9.0
+
+# 或者使用自动化脚本:
+# bash setup_gpu_env.sh (venv)
+# bash setup_gpu_env_conda.sh (conda)
+
+# 详细安装指南请参考: INSTALL_GPU.md
+
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+timm>=0.9.0
+peft>=0.9.0
+transformers>=4.51.0
+modelscope
+tiktoken
+einops
+protobuf<5
