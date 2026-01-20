@@ -1,8 +1,3 @@
-"""
-Fed-HARP 客户端实现。
-处理本地训练、B 矩阵的持久化保存以及 B 矩阵敏感度计算逻辑。
-"""
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,12 +9,12 @@ from models import LoRALinear, get_lora_layer_names
 
 class FedHarpClient:
     """
-    Fed-HARP 联邦学习客户端。
-    
-    核心功能:
-    - 本地持久化 B 矩阵 (永不上传，实现 Native-privacy)
-    - 联合训练分配的层 (Heterogeneous Allocation)
-    - 计算 B 矩阵敏感度 (L2 Norm) 用于指导服务器分配策略
+    Fed-HARP Federated Learning Client.
+
+    Core Functions:
+    - Native Privacy: B matrices are persisted locally and never uploaded.
+    - Heterogeneous Allocation: Jointly train allocated layers.
+    - Sensitivity Calculation: Compute B matrix sensitivity (L2 Norm) to guide server allocation.
     """
     
     def __init__(
@@ -35,59 +30,36 @@ class FedHarpClient:
         warmup_lr: float = 0.0001,
         method: str = "fedharp"
     ):
-        """
-        初始化客户端。
-        
-        参数:
-            client_id: 客户端唯一 ID
-            model: 本地模型实例
-            lora_layers: LoRA 层字典
-            train_loader: 训练数据加载器
-            test_loader: 测试数据加载器
-            device: 运行设备
-            lr: 正常训练的学习率
-            warmup_steps: B 矩阵对齐的预热步数 (预留参数)
-            warmup_lr: 预热阶段的学习率 (预留参数)
-        """
         self.client_id = client_id
         self.model = model
         self.lora_layers = lora_layers
         self.train_loader = train_loader
-        # 可选的本地 test loader；若提供，则 evaluate() 无参时默认使用本地 test
         self.test_loader = test_loader
         self.device = device
         self.lr = lr
         self.method = "fedharp" if str(method).lower() == "fedanon" else method
         
-        # 兼容保留参数
         self.warmup_steps = warmup_steps
         self.warmup_lr = warmup_lr
         
-        # 记录上一轮中被冻结的层 (用于潜在的陈旧度控制逻辑)
         self.previously_frozen_layers: Set[str] = set()
         
-        # 将模型移动到设备
         self.model.to(device)
         
-        # 初始化优化器 (将在每次训练时根据可训练参数重建)
         self.optimizer = None
     
     def get_all_A_matrices(self) -> Dict[str, torch.Tensor]:
-        """获取所有 A 矩阵 (用于上传给服务器聚合)"""
         return {name: layer.get_A() for name, layer in self.lora_layers.items()}
     
     def get_all_B_matrices(self) -> Dict[str, torch.Tensor]:
-        """获取所有 B 矩阵"""
         return {name: layer.get_B() for name, layer in self.lora_layers.items()}
     
     def set_A_matrices(self, A_matrices: Dict[str, torch.Tensor]):
-        """设置来自服务器的 A 矩阵"""
         for name, A in A_matrices.items():
             if name in self.lora_layers:
                 self.lora_layers[name].set_A(A)
 
     def set_B_matrices(self, B_matrices: Dict[str, torch.Tensor]):
-        """设置来自服务器的 B 矩阵"""
         for name, B in B_matrices.items():
             if name in self.lora_layers:
                 self.lora_layers[name].set_B(B)
@@ -103,7 +75,7 @@ class FedHarpClient:
 
         if method_l == "flora":
             if B_matrices is None:
-                raise ValueError("flora 需要 B_matrices")
+                raise ValueError("flora requires B_matrices")
             self.set_A_matrices(A_matrices)
             self.set_B_matrices(B_matrices)
             return
@@ -111,7 +83,7 @@ class FedHarpClient:
         self.set_A_matrices(A_matrices)
         if method_l in {"fedhello", "fedra"}:
             if B_matrices is None:
-                raise ValueError(f"{method_l} 需要 B_matrices")
+                raise ValueError(f"{method_l} requires B_matrices")
             self.set_B_matrices(B_matrices)
 
     def flora_merge_and_reset(self, target_rank: int):
@@ -127,18 +99,10 @@ class FedHarpClient:
         return sensitivities
 
     def _setup_layer_trainability(self, allocated_layers: Set[str]):
-        """
-        根据分配结果设置层的可训练性。
-        当前策略：
-        - 被分配的层: A 与 B 都参与训练
-        - 未分配的层: A 与 B 都冻结
-        """
         for name, layer in self.lora_layers.items():
             if name in allocated_layers:
-                # 被分配的层: 同时训练 A 和 B
                 layer.unfreeze_all()
             else:
-                # 未分配的层: A 和 B 都冻结
                 layer.freeze_all()
 
     def _setup_layer_trainability_B_only(self, train_B_layers: Set[str]):
@@ -150,7 +114,6 @@ class FedHarpClient:
                 layer.freeze_all()
     
     def _create_optimizer(self, warmup_mode: bool = False):
-        """创建优化器，仅包含当前标记为 requires_grad 的参数"""
         trainable_params = []
         seen = set()
         for layer in self.lora_layers.values():
@@ -173,7 +136,6 @@ class FedHarpClient:
         if len(trainable_params) == 0:
             return None
         
-        # 简化：统一使用 client LR
         lr = self.lr
         return optim.Adam(trainable_params, lr=lr)
 
@@ -228,12 +190,6 @@ class FedHarpClient:
         return total_loss / num_batches, grad_sensitivity
 
     def _train_epoch(self, warmup_mode: bool = False) -> float:
-        """
-        训练一个 Epoch。
-        
-        返回:
-            平均 Loss
-        """
         self.model.train()
         total_loss = 0.0
         num_batches = 0
@@ -264,37 +220,22 @@ class FedHarpClient:
         num_epochs: int = 10,
         method: Optional[str] = None
     ):
-        """
-        执行本地训练流程。
-        
-        参数:
-            allocated_layers: 本轮分配给该客户端的层
-            num_epochs: 训练轮数
-        
-        返回:
-            delta_A: A 矩阵的更新量字典
-            b_sensitivity: B 矩阵的敏感度字典 (用于下一轮分配)
-        """
         method = method or self.method
         upload_B = method in ("fedhello", "flora", "fedra")
 
-        # 记录训练前的 A/B 矩阵，用于计算 delta
         A_before = self.get_all_A_matrices()
         B_before = self.get_all_B_matrices() if upload_B else None
         
-        # 设置所有分配层的可训练性
         self._setup_layer_trainability(allocated_layers)
 
         grad_norm_sq_sum = {name: 0.0 for name in self.lora_layers.keys()}
         grad_norm_steps = 0
         
-        # 正常训练阶段 (联合更新 A 和 B)
         for epoch in range(num_epochs):
             train_loss, grad_sensitivity_epoch = self._train_epoch_collect_B_grad_norms(
                 warmup_mode=False, include_A=str(method).lower() == "fedhello"
             )
-            # 打印每个 Epoch 信息
-            print(f"  客户端 {self.client_id}: 训练 Epoch {epoch+1}/{num_epochs}, Loss = {train_loss:.4f}")
+            print(f"  Client {self.client_id}: Training Epoch {epoch+1}/{num_epochs}, Loss = {train_loss:.4f}")
 
             for name, v in grad_sensitivity_epoch.items():
                 grad_norm_sq_sum[name] += v * v
@@ -323,7 +264,6 @@ class FedHarpClient:
                     if name in B_before and name in B_after:
                         updates_B[name] = B_after[name] - B_before[name]
         
-        # 更新 previously_frozen_layers (为了支持潜在的未来扩展)
         all_layer_names = set(self.lora_layers.keys())
         self.previously_frozen_layers = all_layer_names - allocated_layers
 
@@ -341,7 +281,7 @@ class FedHarpClient:
         for epoch in range(num_epochs):
             train_loss, grad_sensitivity_epoch = self._train_epoch_collect_B_grad_norms(warmup_mode=False)
             print(
-                f"  客户端 {self.client_id}: B-only 训练 Epoch {epoch+1}/{num_epochs}, Loss = {train_loss:.4f}"
+                f"  Client {self.client_id}: B-only Training Epoch {epoch+1}/{num_epochs}, Loss = {train_loss:.4f}"
             )
             for name, v in grad_sensitivity_epoch.items():
                 grad_norm_sq_sum[name] += v * v
@@ -352,13 +292,9 @@ class FedHarpClient:
         return {name: 0.0 for name in self.lora_layers.keys()}
     
     def evaluate(self, test_loader: Optional[DataLoader] = None) -> Dict[str, float]:
-        """
-        在测试集上评估模型性能。
-        如果未显式传入 test_loader，则优先使用客户端保存的本地 'test' 数据集。
-        """
         if test_loader is None:
             if self.test_loader is None:
-                raise ValueError("未提供测试集 DataLoader，且客户端未配置本地 test_loader")
+                raise ValueError("No test DataLoader provided, and no local test_loader configured.")
             test_loader = self.test_loader
             
         self.model.eval()
