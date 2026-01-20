@@ -1,5 +1,5 @@
 """
-RoBERTa + GLUE 的 Fed-HARP 联邦训练入口。
+Fed-HARP federated training entry point for RoBERTa + GLUE.
 """
 
 import argparse
@@ -607,7 +607,6 @@ def create_roberta_lora_model(
             low_cpu_mem_usage=False
         )
     except TypeError:
-        # Fallback for older transformers that don't support weights_only
         model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=int(num_labels))
 
     lora_config = LoraConfig(
@@ -762,7 +761,7 @@ class TextFedHarpClient(FedHarpClient):
     def evaluate(self, test_loader: Optional[DataLoader] = None) -> Dict[str, float]:
         if test_loader is None:
             if self.test_loader is None:
-                raise ValueError("未提供测试集 DataLoader，且客户端未配置本地 test_loader")
+                raise ValueError("No test DataLoader provided, and no local test_loader configured.")
             test_loader = self.test_loader
 
         self.model.eval()
@@ -867,7 +866,7 @@ def main(argv: Optional[Sequence[str]] = None):
     if device.type == "cuda" and torch.cuda.device_count() > 1:
         dev = str(args.device)
         if (":" not in dev) or dev.endswith(":0") or dev == "cuda":
-            print(f"检测到 {torch.cuda.device_count()} 张 GPU，可用 --device cuda:1 使用第二张 GPU")
+            print(f"Detected {torch.cuda.device_count()} GPUs. Use --device cuda:1 to select the second GPU.")
 
     if args.save_checkpoints:
         create_directories(args.checkpoint_dir)
@@ -880,7 +879,7 @@ def main(argv: Optional[Sequence[str]] = None):
                 f.write(f"{k} = {v}\n")
             f.write("\nRound logs:\n")
     except Exception as e:
-        print(f"[警告] 无法写入日志文件 {log_path}: {e}")
+        print(f"[WARNING] Cannot write log file {log_path}: {e}")
 
     train_texts_all, train_labels_all, val_texts_all, val_labels_all = _load_dataset(args)
 
@@ -920,7 +919,7 @@ def main(argv: Optional[Sequence[str]] = None):
         seed=args.seed,
     )
     if int(len(train_labels)) < int(args.num_clients):
-        raise SystemExit(f"num_clients={args.num_clients} 大于训练样本数={len(train_labels)}，无法分配到每个客户端")
+        raise SystemExit(f"num_clients={args.num_clients} exceeds training samples={len(train_labels)}, cannot partition for every client.")
 
     empty_clients = [cid for cid in range(int(args.num_clients)) if len(client_indices[cid]) == 0]
     if empty_clients:
@@ -981,7 +980,7 @@ def main(argv: Optional[Sequence[str]] = None):
     client_sample_counts: Dict[int, int] = {}
     eval_on = str(getattr(args, "eval_on", "val")).lower().strip()
     if eval_on == "client_holdout":
-        print("Eval split: client_holdout (来自训练集内部切分，不等同于 GLUE validation)")
+        print("Eval split: client_holdout (Internal split from training set, not GLUE validation)")
     else:
         print("Eval split: val (GLUE validation)")
     for cid in range(args.num_clients):
@@ -1090,7 +1089,7 @@ def main(argv: Optional[Sequence[str]] = None):
             uplink_B_mb = 0.0
             if needs_b:
                 if delta_B is None:
-                    raise ValueError(f"{method} 需要上传 B")
+                    raise ValueError(f"{method} requires uploading B")
                 uplink_B_mb = _delta_B_nbytes(delta_B) / (1024.0 * 1024.0)
             comm_mb = downlink_A_mb + downlink_B_mb + uplink_A_mb + uplink_B_mb
 
@@ -1126,7 +1125,7 @@ def main(argv: Optional[Sequence[str]] = None):
                         "downlink_mb={downlink_mb:.6f}, uplink_mb={uplink_mb:.6f}\n".format(**client_metrics_ab[-1])
                     )
             except Exception as e:
-                print(f"[警告] 无法写入日志文件 {log_path}: {e}")
+                print(f"[WARNING] Cannot write log file {log_path}: {e}")
 
         if len(client_metrics_ab) > 0:
             avg_compute = float(np.mean([m["compute_tflops"] for m in client_metrics_ab]))
@@ -1141,7 +1140,7 @@ def main(argv: Optional[Sequence[str]] = None):
                         f"avg_comm_mb={avg_comm:.6f}, avg_train_time_sec={avg_time:.6f}\n"
                     )
             except Exception as e:
-                print(f"[警告] 无法写入日志文件 {log_path}: {e}")
+                print(f"[WARNING] Cannot write log file {log_path}: {e}")
 
         if needs_b:
             server.aggregate_matrices(
@@ -1187,7 +1186,7 @@ def main(argv: Optional[Sequence[str]] = None):
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(f"round={round_num}, type=personalized, accuracy={global_acc:.4f}, loss={global_loss:.6f}\n")
             except Exception as e:
-                print(f"[警告] 无法写入日志文件 {log_path}: {e}")
+                print(f"[WARNING] Cannot write log file {log_path}: {e}")
 
             if global_acc > best_accuracy:
                 best_accuracy = global_acc
@@ -1200,3 +1199,4 @@ def main(argv: Optional[Sequence[str]] = None):
 
 if __name__ == "__main__":
     main()
+
