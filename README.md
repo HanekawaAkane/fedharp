@@ -203,6 +203,15 @@ python main.py --task vision -- \
 - `--save_checkpoints`: Save model checkpoints
 - `--checkpoint_dir`: Directory for checkpoints (default: `./checkpoints`)
 
+## License
+
+This project is licensed under the MIT License.
+
+## Contact
+For questions or issues, please open an issue on the repository.
+
+**Note**: This implementation is a research prototype. For production use, additional optimizations and security considerations should be implemented.
+
 ### Example: Reproducing Paper Results
 
 ```bash
@@ -222,13 +231,5 @@ python main.py --task vision -- \
     --seed 42
 
 
-## License
-
-This project is licensed under the MIT License.
-
-## Contact
-For questions or issues, please open an issue on the repository.
-
-**Note**: This implementation is a research prototype. For production use, additional optimizations and security considerations should be implemented.
 
 
