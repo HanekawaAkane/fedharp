@@ -12,8 +12,6 @@ python main.py --task roberta -- --help
 ```
 
 
-- `main.py --task roberta` 调用 robertamain.py 的 `main(argv)`
-- `main.py --task vision` 运行 main.py 内置的 vision 训练主循环
 
 ## Methodology
 
